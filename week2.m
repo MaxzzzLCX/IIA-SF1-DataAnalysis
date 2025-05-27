@@ -1,8 +1,9 @@
 %% SF1 - Data Analysis Week 2
 
-%% Task 2.1
+%% Task 2.1 FFT v.s. STFT
 clc, clearvars
 
+% (1) STFT Implementation
 % input signal (cos and sin) with gaussian noise
 x_in=0.5*cos([1:10000]*pi/4)+sin([1:10000]*pi/100)+randn(1,10000); 
 y_out=0*x_in;
@@ -29,35 +30,186 @@ end
 % Convert frequency bin into frequencies
 SignalN = length(x_in);
 
-% TODO
-freqs = linspace(0,2*pi,SignalN/2+1);
+
+freqs = linspace(0,pi,SignalN/2+1);
 % freqs = (0:(SignalN-1)/2)/SignalN * 2*pi;
 
 figure;
-subplot(1,2,1)
-% Plot the original signal spectrum
-X = fftshift((abs(fft(x_in))));
-X_pos = X(SignalN/2:SignalN);
-plot(freqs, X_pos);
-xlabel('Frequency (bins)');
-ylabel('Magnitude');
-ylim([0,6000])
-xlim([0,2*pi])
-title('FFT Spectrum of Input Signal')
 
-subplot(1,2,2)
+subplot(2,1,1)
 % Plot the processed signal spectrum
 Y = fftshift((abs(fft(y_out))));
 Y_pos = Y(SignalN/2:SignalN);
 plot(freqs, Y_pos);
-ylim([0,6000])
-xlim([0,2*pi])
+% semilogy(freqs, Y_pos);
+ylim([0,3000])
+xlim([0,pi])
 xlabel('Frequency (bins)');
 ylabel('Magnitude');
-title('FFT Spectrum of Input Signal');
+title('STFT Spectrum of Signal');
+
+% (2) FFT Implementation
+x_in=0.5*cos([1:10000]*pi/4)+sin([1:10000]*pi/100)+randn(1,10000); 
+N = length(x_in);
+w = hanning(N);
+% x = x_in .* w'; % apply hanning window
+x = x_in; % not apply hanning window
 
 
-%% Task 2.2 - Own Noise Reduction
+
+y=0*x;
+X =fft(x); % FFT of windowed frame
+Y = X;
+Y(2:N/8)=0.1*X(2:N/8); % attenuate bin 2 to 64 (N/8) by -20dB (*0.1)
+Y(N/4+1:N/2)=0.2*X(N/4+1:N/2); % attentuate bin 129 to 256 by -14dB (*0.2)
+Y(N:-1:N/2+2)=conj(Y(2:N/2)); % make negative freq as conj of bin 2 to 64
+                                                    % symmetry keeps signal real valued
+y =ifft(Y); % inverse FFT
+
+subplot(2,1,2)
+% Plot the processed signal spectrum
+Y = fftshift((abs(fft(y))));
+Y_pos = Y(N/2:N);
+plot(freqs, Y_pos);
+% semilogy(freqs, Y_pos);
+ylim([0,3000])
+xlim([0,pi])
+xlabel('Frequency (bins)');
+ylabel('Magnitude');
+title('FFT Spectrum of Output Signal');
+
+
+% Plot time domain
+figure
+subplot(2,1,1)
+plot(y_out)
+title("STFT Signal")
+xlabel("Timestep")
+ylabel("Amplitude")
+
+subplot(2,1,2)
+plot(y)
+title("FFT Signal")
+xlabel("Timestep")
+ylabel("Amplitude")
+
+%%  Time-domain equivalent of the FFT mask
+clc, clearvars
+
+% (1) STFT Implementation
+% input signal (cos and sin) with gaussian noise
+x_in=0.5*cos([1:10000]*pi/4)+sin([1:10000]*pi/100)+randn(1,10000); 
+y_out=0*x_in;
+N=512;
+overlap=256; % N/2 overlap length
+x=buffer(x_in,N,overlap); % partitioning the sigal into length 512 frames with 256 overlap
+[N_samps,N_frames]=size(x);
+x_w=repmat(hanning(N),1,N_frames).*x; % applying hanning window of length N to each frame
+
+for frame_no=1:N_frames-2
+    X_w(:,frame_no)=fft(x_w(:,frame_no)); % FFT of windowed frame
+    Y_w(:,frame_no)=X_w(:,frame_no);
+    Y_w(2:N/8,frame_no)=0.1*X_w(2:N/8,frame_no); % attenuate bin 2 to 64 (N/8) by -20dB (*0.1)
+    Y_w(N/4+1:N/2,frame_no)=0.2*X_w(N/4+1:N/2,frame_no); % attentuate bin 129 to 256 by -14dB (*0.2)
+    Y_w(N:-1:N/2+2,frame_no)=conj(Y_w(2:N/2,frame_no)); % make negative freq as conj of bin 2 to 64
+                                                        % symmetry keeps signal real valued
+    y_w(:,frame_no)=ifft(Y_w(:,frame_no)); % inverse FFT
+
+    % Overlap and resynthesis all the frames
+    y_out((frame_no-1)*overlap+1:(frame_no-1)*overlap+N)=...
+    y_out((frame_no-1)*overlap+1:(frame_no-1)*overlap+N)+y_w(:,frame_no)';
+end
+
+% Convert frequency bin into frequencies
+SignalN = length(x_in);
+
+freqs = linspace(0,pi,SignalN/2+1);
+% freqs = (0:(SignalN-1)/2)/SignalN * 2*pi;
+
+figure;
+
+subplot(2,1,1)
+% Plot the processed signal spectrum
+Y = fftshift((abs(fft(y_out))));
+Y_pos = Y(SignalN/2:SignalN);
+plot(freqs, Y_pos);
+% semilogy(freqs, Y_pos);
+ylim([0,3000])
+xlim([0,pi])
+xlabel('Frequency (bins)');
+ylabel('Magnitude');
+title('STFT Filter of Signal');
+
+
+
+
+% ---------------------------------------------------------------
+x          = 0.5*cos((1:10000)*pi/4) + sin((1:10000)*pi/100) + randn(1,10000);
+N          = 512;                        % frame length used before
+signalN    = length(x);
+
+% --- build the spectral mask G[k] --------------------------------
+G = ones(N,1);          % default pass-band gain = 1
+G( 2       :  N/8)   = 0.1;       %   0  – Fs/8   → ×0.1
+G( N/4+1   :  N/2)   = 0.2;       % Fs/4 – Fs/2   → ×0.2
+G(N:-1:N/2+2) = conj(G(2:N/2));   % ensure Hermitian symmetry
+
+% --- impulse response (IFFT of the mask) -------------------------
+g = ifft(G,'symmetric');           % real length-512 FIR
+g = fftshift(g);                   % centre the impulse
+g = circshift(g,1);                % make it causal: tap 0 at index 1
+
+% OPTIONAL: visual check of its magnitude response ----------------
+%{
+f = (0:N-1)/N * pi;                % rad/sample axis
+plot(f, abs(G)), grid on
+xlabel('\omega'), ylabel('|G(\omega)|')
+%}
+
+% --- linear convolution with the whole signal --------------------
+y = conv(x, g, 'same');            % 'same' keeps output length = length(x)
+
+freqs = linspace(0,pi,signalN/2+1);
+Y = fftshift((abs(fft(y))));
+Y_pos = Y(length(Y)/2:length(Y));
+subplot(2,1,2)
+plot(freqs,Y_pos)
+ylim([0,3000])
+xlim([0,pi])
+xlabel('Frequency (bins)');
+ylabel('Magnitude');
+title('Time-Domain Filter');
+
+
+
+
+% Plot time domain
+figure
+subplot(2,1,1)
+plot(y_out)
+title("STFT Filter")
+xlabel("Timestep")
+ylabel("Amplitude")
+
+subplot(2,1,2)
+plot(y)
+title("Time Domain Filter")
+xlabel("Timestep")
+ylabel("Amplitude")
+
+
+
+
+% --- quick comparison with the OLA result ------------------------
+% (Assume you have y_stft from your previous code)
+% sound([x ; y_stft ; y], fs)      % original / OLA / direct-FIR
+
+
+
+
+
+
+%% Task 2.2 - Own Noise Reduction - Ad Hoc Method
 
 
 % Adapt the given code from Task 2.1 into a Noise Reduction function
@@ -196,3 +348,156 @@ ylim([0,300])
 subplot(1,3,3)
 plot(fft_reduced_pos)
 ylim([0,300])
+
+
+
+%% Task 2.2 - Wiener Filter
+
+clc, clearvars
+[data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
+% Play the audio signal
+% sound(data, rate)
+
+
+x = data(1:20000)'; % reshape for noiseReduction input shape
+sound(x, rate)
+
+% Noise Magnitude
+noise_mag = 0.01;
+y = x + noise_mag * randn(size(x)); % audio with noise added
+
+
+% Do FFT on signals, signal+noise
+SignalN = length(x); 
+X = fft(x);       % FFT of pure signal
+Y = fft(y); % FFT of signal + noise
+
+S_Y = abs(Y).^2;                   % power of audio with noise
+S_N = noise_mag^2 * ones(size(Y)); % power of white noise
+S_X = max(0, S_Y - S_N);           % power of signal
+
+wienerFilter = S_X ./ (S_X + S_N);
+
+X_hat = wienerFilter .* Y;
+
+x_hat = real(ifft(X_hat));
+
+% Reformat the FFT for plotting
+X_pos = fftshift(abs(X)); X_pos = X_pos(SignalN/2:SignalN);
+Y_pos = fftshift(abs(Y)); Y_pos = Y_pos(SignalN/2:SignalN);
+X_hat_pos = fftshift(abs(X_hat)); X_hat_pos = X_hat_pos(SignalN/2:SignalN);
+
+freqs = (0:length(X_pos)-1) * rate / SignalN;
+
+subplot(1,3,1)
+plot(freqs, X_pos)
+title("Signal of audio before noise")
+ylim([0,300])
+
+subplot(1,3,2)
+plot(freqs, Y_pos)
+title("Signal with noise")
+ylim([0,300])
+
+subplot(1,3,3)
+plot(freqs, X_hat_pos)
+title("Signal after filtering")
+ylim([0,300])
+
+
+%% Task 2.2 Wiener Filter in STFT (Frame-wise)
+
+clc, clearvars
+[data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
+
+x = data(1:20000)'; % reshape for noiseReduction input shape
+% sound(x, rate)
+
+noise_mag = 0.05; % Noise Magnitude
+y = x + noise_mag * randn(size(x)); % audio with noise added
+
+function filter = WienerFilter(signal_with_noise, noise_mag)
+    Y = fft(signal_with_noise); % FFT of signal + noise
+
+    S_Y = abs(Y).^2;                   % power of audio with noise
+    S_N = noise_mag^2 * ones(size(Y)); % power of white noise
+    S_X = max(0, S_Y - S_N);           % power of signal
+    
+    filter = S_X ./ (S_X + S_N);       % Returns a wiener filter of length same as the signal
+end
+
+function y_hat = framewiseWiener(y_in, N, overlap, noise_mag)
+    
+    y_hat=0*y_in;
+
+    y=buffer(y_in,N,overlap); % partitioning the sigal into length 512 frames with 256 overlap
+    [N_samps,N_frames]=size(y);
+    y_w=repmat(hanning(N),1,N_frames).*y; % applying hanning window of length N to each frame
+    
+    % % Gain Mask according to the frequency identified from FFT
+    % G = attenFactor * ones(N,1); % Default all frequency as attentuation x0.1 (-20dB)
+    % G(keepMask) = 1; % All identified freqs at 1
+
+    for frame_no=1:N_frames-2
+        
+        Y_w(:,frame_no)=fft(y_w(:,frame_no)); % FFT of windowed frame
+        
+        G = WienerFilter(y_w(:,frame_no), noise_mag); % Calculate the Wiener filter of this frame of data
+        
+        Y_hat_w(:,frame_no)= G .* Y_w(:,frame_no); % Applying Gain Mask to X
+        % Y_w(2:N/8,frame_no)=0.1*X_w(2:N/8,frame_no); % attenuate bin 2 to 64 (N/8) by -20dB (*0.1)
+        % Y_w(N/4+1:N/2,frame_no)=0.2*X_w(N/4+1:N/2,frame_no); % attentuate bin 129 to 256 by -14dB (*0.2)
+        Y_hat_w(N:-1:N/2+2,frame_no)=conj(Y_hat_w(2:N/2,frame_no)); % make negative freq as conj of bin 2 to 64
+                                                            % symmetry keeps signal real valued
+        y_hat_w(:,frame_no)=ifft(Y_hat_w(:,frame_no)); % inverse FFT
+    
+        % Overlap and resynthesis all the frames
+        y_hat((frame_no-1)*overlap+1:(frame_no-1)*overlap+N)= ...
+        y_hat((frame_no-1)*overlap+1:(frame_no-1)*overlap+N)+y_hat_w(:,frame_no)';
+    end
+end
+
+% Apply the frame-wise Wiener filter to the noisy signal
+y_hat = framewiseWiener(y, 512, 256, noise_mag);
+
+% Play the filtered audio signal
+% sound(y_hat, rate);
+
+% Plot the original and filtered signals for comparison
+figure;
+subplot(2,1,1);
+plot(y);
+title('Original Signal');
+xlabel('Sample Index');
+ylabel('Amplitude');
+
+subplot(2,1,2);
+plot(y_hat);
+title('Filtered Signal');
+xlabel('Time Index');
+ylabel('Amplitude');
+
+% Plot the original and filtered signals for comparison
+figure
+Y = fftshift(abs(fft(y)));
+Y_pos = Y(length(Y)/2:length(Y));
+subplot(2,1,1);
+plot(Y_pos);
+title('Original Signal');
+xlabel('Time Index');
+ylabel('Amplitude');
+
+Y_hat = fftshift(abs(fft(y_hat)));
+Y_hat_pos = Y(length(Y)/2:length(Y_hat));
+subplot(2,1,2);
+plot(Y_hat_pos);
+title('Filtered Signal');
+xlabel('Time Index');
+ylabel('Amplitude');
+
+error_noise = computeMSE(x, y_hat);
+error_reduced = computeMSE(x, y);
+disp(error_noise)
+disp(error_reduced)
+
+%% Task 2.3 Mean Square Error
