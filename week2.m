@@ -81,15 +81,21 @@ title('FFT Spectrum of Output Signal');
 
 % Plot time domain
 figure
-subplot(2,1,1)
+subplot(3,1,1)
 plot(y_out)
 title("STFT Signal")
 xlabel("Timestep")
 ylabel("Amplitude")
 
-subplot(2,1,2)
+subplot(3,1,2)
 plot(y)
 title("FFT Signal")
+xlabel("Timestep")
+ylabel("Amplitude")
+
+subplot(3,1,3)
+plot(y-y_out)
+title("Difference")
 xlabel("Timestep")
 ylabel("Amplitude")
 
@@ -185,17 +191,18 @@ title('Time-Domain Filter');
 
 % Plot time domain
 figure
-subplot(2,1,1)
-plot(y_out)
-title("STFT Filter")
-xlabel("Timestep")
-ylabel("Amplitude")
+% subplot(2,1,1)
+% plot(y_out)
+% title("STFT Filter")
+% xlabel("Timestep")
+% ylabel("Amplitude")
 
-subplot(2,1,2)
-plot(y)
-title("Time Domain Filter")
+plot(y, 'DisplayName', 'Time Domain'); hold on
+plot(y_out, 'DisplayName', 'STFT Filter')
+title("TIme domain and STFT Comparison")
 xlabel("Timestep")
 ylabel("Amplitude")
+legend('show')
 
 
 
@@ -410,7 +417,8 @@ ylim([0,300])
 clc, clearvars
 [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
 
-N = 2048; L = 1024; % 512 Frame size, 256 Overlap
+N = 512; L = 256; % 512 Frame size, 256 Overlap
+noise_type = "white";
 
 
 SignalN = 30000;
@@ -422,7 +430,7 @@ y = x + noise_mag * randn(size(x)); % audio with noise added
 
 
 % Apply the frame-wise Wiener filter to the noisy signal
-y_hat = framewiseWiener(y, 512, 256, noise_mag); % see framewiseWiener.m
+y_hat = framewiseWiener(y, 512, 256, noise_mag, noise_type); % see framewiseWiener.m
 
 % Play the filtered audio signal
 % sound(y_hat, rate);
@@ -447,7 +455,7 @@ title('Filtered Signal');
 xlabel('Time Index');
 ylabel('Amplitude'); ylim([-0.5,0.5])
 
-sgtitle(sprintf('Frame-wise Winer Filter, N=%d, L=%d', N, L))
+sgtitle(sprintf('Frame-wise Wiener Filter, N=%d, L=%d', N, L))
 
 % Plot the original and filtered signals for comparison
 figure
@@ -488,7 +496,7 @@ title('Filtered Signal');
 xlabel('Frequency (Hz)');
 ylabel('Amplitude (dB)');
 
-sgtitle(sprintf('Frame-wise Winer Filter, N=%d, L=%d', N, L))
+sgtitle(sprintf('Frame-wise Wiener Filter, N=%d, L=%d', N, L))
 
 error_noise = computeMSE(x, y, N, L);
 error_reduced = computeMSE(x, y_hat, N, L);
@@ -499,7 +507,7 @@ fprintf("MSE of Filtered Signal %.8f\n", error_reduced)
 
 
 
-%% Task 2.2 Non-White Noise
+%% Task 2.2 Non-White Noise - Original Approach
 
 clc, clearvars
 [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
@@ -512,12 +520,107 @@ x = data(1:SignalN)'; % reshape for noiseReduction input shape
 % sound(x, rate)
 
 noise_mag = 0.05; % Noise Magnitude
-non_white_noise = generateAR1Noise(SignalN, 0.9, 0.01);
+non_white_noise = generateAR1Noise(SignalN, 0.9, 0.03);
 y = x + non_white_noise; % audio with noise added
 
 
 % Apply the frame-wise Wiener filter to the noisy signal
 y_hat = framewiseWiener(y, 512, 256, noise_mag, "AR1"); % see framewiseWiener.m
+% y_hat = FramewiseFilter(y, N, L, noise_mag, "AR1", "spectral_subtraction");
+
+% Play the filtered audio signal
+% sound(y_hat, rate);
+
+% Plot the original and filtered signals for comparison
+figure;
+subplot(3,1,1);
+plot(x);
+title('Original Signal (No Noise)');
+xlabel('Sample Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+subplot(3,1,2);
+plot(y);
+title('Signal with Noise');
+xlabel('Sample Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+subplot(3,1,3);
+plot(y_hat);
+title('Filtered Signal');
+xlabel('Time Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+sgtitle(sprintf('Frame-wise Wiener Filter on AR(1) Noise(\\alpha=%.1f,\\sigma=%.2f), N=%d, L=%d',0.9,0.01, N, L))
+
+% Plot the original and filtered signals for comparison
+figure
+% title("Frame-wise Winer Filter, N=")
+
+
+
+
+X = fftshift(abs(fft(x)));
+X_pos = X(length(X)/2:length(X));
+freqs = (0:length(X_pos)-1) * rate / SignalN;
+
+subplot(3,1,1);
+X_dB = 20*log10(X_pos);
+% plot(freqs, X_pos);
+plot(freqs, X_dB)
+title('Original Signal (No Noise)');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+Y = fftshift(abs(fft(y)));
+Y_pos = Y(length(Y)/2:length(Y));
+Y_dB = 20*log10(Y_pos);
+subplot(3,1,2);
+% plot(freqs, Y_pos);
+plot(freqs, Y_dB)
+title('Signal with Noise');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+Y_hat = fftshift(abs(fft(y_hat)));
+Y_hat_pos = Y(length(Y)/2:length(Y_hat));
+Y_hat_dB = 20*log10(Y_hat_pos);
+subplot(3,1,3);
+% plot(freqs, Y_hat_pos);
+plot(freqs, Y_hat_dB)
+title('Filtered Signal');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+sgtitle(sprintf('Frame-wise Wiener Filter on AR(1) Noise(\\alpha=%.1f,\\sigma=%.2f), N=%d, L=%d',0.9,0.01, N, L))
+
+error_noise = computeMSE(x, y, N, L);
+error_reduced = computeMSE(x, y_hat, N, L);
+fprintf("MSE of Noisy Signal %.8f\n", error_noise)
+fprintf("MSE of Filtered Signal %.8f\n", error_reduced)
+
+
+%% Task 2.2 Non-White Noise - Adaptive Scheme
+
+clc, clearvars
+[data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
+
+N = 512; L = 256; % 512 Frame size, 256 Overlap
+alpha = 0.9; sigma = 0.03;
+
+
+SignalN = 30000;
+x = data(1:SignalN)'; % reshape for noiseReduction input shape
+% sound(x, rate)
+
+noise_mag = 0.05; % Noise Magnitude
+non_white_noise = generateAR1Noise(SignalN, alpha, sigma);
+y = x + non_white_noise; % audio with noise added
+
+
+% Apply the frame-wise Wiener filter to the noisy signal
+y_hat = framewiseWiener(y, 512, 256, noise_mag, "AR1"); % see framewiseWiener.m
+% y_hat = FramewiseFilterAdaptive(y, N, L, "AR1", "spectral_subtraction", 30, 10); % see FramewiseFilterAdaptive.m
 
 % Play the filtered audio signal
 % sound(y_hat, rate);
@@ -589,3 +692,101 @@ error_noise = computeMSE(x, y, N, L);
 error_reduced = computeMSE(x, y_hat, N, L);
 fprintf("MSE of Noisy Signal %.8f\n", error_noise)
 fprintf("MSE of Filtered Signal %.8f\n", error_reduced)
+
+%% Task 2.2 Comparing Different Frame-wise Filters in STFT, with new funciton
+
+clc, clearvars
+[data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
+
+N = 256; L = 224; % 512 Frame size, 256 Overlap
+noise_type = "white";
+filter_type = "wiener";
+
+
+SignalN = 30000;
+x = data(1:SignalN)'; % reshape for noiseReduction input shape
+% sound(x, rate)
+
+noise_mag = 0.05; % Noise Magnitude
+y = x + noise_mag * randn(size(x)); % audio with noise added
+
+
+% Apply the frame-wise Wiener filter to the noisy signal
+y_hat = FramewiseFilter(y, 512, 256, noise_mag, noise_type, filter_type); % see framewiseWiener.m
+
+% Play the filtered audio signal
+% sound(y_hat, rate);
+
+% Plot the original and filtered signals for comparison
+figure;
+subplot(3,1,1);
+plot(x);
+title('Original Signal (No Noise)');
+xlabel('Sample Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+subplot(3,1,2);
+plot(y);
+title('Signal with Noise');
+xlabel('Sample Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+subplot(3,1,3);
+plot(y_hat);
+title('Filtered Signal');
+xlabel('Time Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+sgtitle(sprintf('Frame-wise Wiener Filter, N=%d, L=%d', N, L))
+
+% Plot the original and filtered signals for comparison
+figure
+% title("Frame-wise Winer Filter, N=")
+
+
+
+
+X = fftshift(abs(fft(x)));
+X_pos = X(length(X)/2:length(X));
+freqs = (0:length(X_pos)-1) * rate / SignalN;
+
+subplot(3,1,1);
+X_dB = 20*log10(X_pos);
+% plot(freqs, X_pos);
+plot(freqs, X_dB)
+title('Original Signal (No Noise)');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+Y = fftshift(abs(fft(y)));
+Y_pos = Y(length(Y)/2:length(Y));
+Y_dB = 20*log10(Y_pos);
+subplot(3,1,2);
+% plot(freqs, Y_pos);
+plot(freqs, Y_dB)
+title('Signal with Noise');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+Y_hat = fftshift(abs(fft(y_hat)));
+Y_hat_pos = Y(length(Y)/2:length(Y_hat));
+Y_hat_dB = 20*log10(Y_hat_pos);
+subplot(3,1,3);
+% plot(freqs, Y_hat_pos);
+plot(freqs, Y_hat_dB)
+title('Filtered Signal');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+sgtitle(sprintf('Frame-wise Wiener Filter, N=%d, L=%d', N, L))
+
+error_noise = computeMSE(x, y, N, L);
+error_reduced = computeMSE(x, y_hat, N, L);
+fprintf("MSE of Noisy Signal %.8f\n", error_noise)
+fprintf("MSE of Filtered Signal %.8f\n", error_reduced)
+
+% Save processed data
+mse_str = num2str(error_reduced, '%.6f');   
+filename = sprintf('%s_%d_%d_%s.wav', filter_type, N, L, mse_str);
+ 
+% audiowrite( filename, y_hat, rate );

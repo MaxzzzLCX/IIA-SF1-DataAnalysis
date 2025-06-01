@@ -1,0 +1,83 @@
+%% Task 2.4 Noise Reduction
+
+clc, clearvars
+[data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Noisy audio for denoising tests-20250528/male_speech_noisy_soft.wav");
+
+N = 512; L = 256; % 512 Frame size, 256 Overlap
+% noise_mag = 0.01; % guess for now
+noise_type = "white";
+filter_type = "spectral_subtraction";
+audio_name = "male_soft";
+
+SignalN = length(data);
+y = data(1:SignalN)'; % reshape for noiseReduction input shape
+% sound(x, rate)
+
+
+% noise_mag = estimateNoisePower(y, N);     % Use this for LOUD noise clips
+noise_mag = sqrt(estimateNoisePower(y, N));   % Use this for SOFT noise clips
+
+
+
+disp(noise_mag)
+
+% Apply the frame-wise Wiener filter to the noisy signal
+y_hat = FramewiseFilter(y, 512, 256, noise_mag, noise_type, filter_type); % see framewiseWiener.m
+
+% Play the filtered audio signal
+% sound(y_hat, rate);
+
+% Plot the original and filtered signals for comparison
+figure;
+
+subplot(2,1,1);
+plot(y);
+title('Signal with Noise');
+xlabel('Sample Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+subplot(2,1,2);
+plot(y_hat);
+title('Filtered Signal');
+xlabel('Time Index');
+ylabel('Amplitude'); ylim([-0.5,0.5])
+
+sgtitle(sprintf('"Male Soft": Frame-wise Spectral Subtraction (N=%d, L=%d)' , N, L))
+
+% Plot the original and filtered signals for comparison
+figure
+
+
+Y = fftshift(abs(fft(y)));
+Y_pos = Y(length(Y)/2:length(Y));
+Y_dB = 20*log10(Y_pos);
+freqs = (0:length(Y_pos)-1) * rate / SignalN;
+subplot(2,1,1);
+% plot(freqs, Y_pos);
+plot(freqs, Y_dB)
+title('Signal with Noise');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+Y_hat = fftshift(abs(fft(y_hat)));
+Y_hat_pos = Y(length(Y)/2:length(Y_hat));
+Y_hat_dB = 20*log10(Y_hat_pos);
+subplot(2,1,2);
+% plot(freqs, Y_hat_pos);
+plot(freqs, Y_hat_dB)
+title('Filtered Signal');
+xlabel('Frequency (Hz)');
+ylabel('Amplitude (dB)');
+
+sgtitle(sprintf('Frame-wise Wiener Filter, N=%d, L=%d', N, L))
+
+% error_noise = computeMSE(x, y, N, L);
+% error_reduced = computeMSE(x, y_hat, N, L);
+% fprintf("MSE of Noisy Signal %.8f\n", error_noise)
+% fprintf("MSE of Filtered Signal %.8f\n", error_reduced)
+
+% Save processed data
+% mse_str = num2str(error_reduced, '%.6f');   
+filename = sprintf('%s_%s_%d_%d.wav', audio_name, filter_type, N, L);
+ 
+% audiowrite( filename, y_hat, rate );
