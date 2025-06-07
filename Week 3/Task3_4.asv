@@ -161,39 +161,43 @@ function plotResults(y, signal, best_offset, posterior_probs, theta_estimates, n
     hold on;
     [max_prob, max_idx] = max(posterior_probs);
     plot(max_idx-1, max_prob, 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'red');
-    legend("", "MAP Estimate of offset");
     grid on;
 
     sgtitle('Bayesian Signal Detection Results');
     
     % Plot 3: Theta estimates vs offset
     figure;
+    subplot(2,1,1);
     plot(offsets, theta_estimates, 'g-', 'LineWidth', 1.5); hold on;
     plot(best_offset, theta_estimates(best_offset + 1), 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'red');
     xlabel('Offset Position'); ylabel('Estimated θ');
     title('MAP Estimates of Signal Amplitude');
-    legend("",sprintf("MAP theta at offset=%d is %.3f", best_offset, theta_estimates(best_offset + 1)))
     grid on;
     
     % Plot 4: Model comparison (signal vs null)
-    figure;
+    subplot(2,1,2);
     signal_prob = 1 - null_prob;
     bar_data = [signal_prob, null_prob];
     bar(bar_data, 'FaceColor', [0.7, 0.7, 0.7]);
     set(gca, 'XTickLabel', {'Signal Present', 'Null (No Signal)'});
     ylabel('Probability');
     title('Signal Detection: Signal vs Null Hypothesis');
-    legend(sprintf("Prob. of Null Hypothesis = %.4f", null_prob))
+    
+    % Add probability labels on bars
+    for i = 1:2
+        text(i, bar_data(i) + 0.01, sprintf('%.4f', bar_data(i)), ...
+             'HorizontalAlignment', 'center', 'FontWeight', 'bold');
+    end
     grid on;
     
-    % sgtitle('Bayesian Signal Detection Results');
+    sgtitle('Bayesian Signal Detection Results');
 end
 
 function testPriorSensitivity(y, signal, sigma_n)
     fprintf('\n=== TESTING PRIOR SENSITIVITY ===\n');
     
     % Test different values of sigma_theta
-    sigma_theta_values = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10, 50, 100];
+    sigma_theta_values = [0.1, 0.5, 1.0, 2.0, 5.0];
     
     results = [];
     for i = 1:length(sigma_theta_values)
