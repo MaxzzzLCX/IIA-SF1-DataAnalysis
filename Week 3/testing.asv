@@ -1,0 +1,751 @@
+%% AR-Based Audio Interpolation Analysis
+clc; clear; close all;
+
+fprintf('=== AR-BASED AUDIO INTERPOLATION ANALYSIS ===\n');
+
+% Load audio files (adjust paths as needed)
+% audio_files = {'audio1.wav', 'audio2.wav'};  % Replace with your actual filenames
+audio_files = {'/Users/maxlyu/Desktop/Part IIA/SF1/IIA-SF1-DataAnalysis/Week 3/armst_37_missing.wav'};
+analysis_results = {};
+
+for file_idx = 1:length(audio_files)
+    if exist(audio_files{file_idx}, 'file')
+        fprintf('\n--- Analyzing %s ---\n', audio_files{file_idx});
+        
+        % Load audio
+        [audio_data, fs] = audioread(audio_files{file_idx});
+        
+        % Convert to mono if stereo
+        if size(audio_data, 2) > 1
+            audio_data = mean(audio_data, 2);
+        end
+        
+        % Analyze short segments
+        analyzeAudioSegments(audio_data, fs, audio_files{file_idx});
+        
+        % Interpolation experiments
+        interpolationExperiments(audio_data, fs, audio_files{file_idx});
+        
+    else
+        fprintf('Warning: File %s not found. Skipping...\n', audio_files{file_idx});
+    end
+end
+
+function analyzeAudioSegments(audio_data, fs, filename)
+    % Analyze different types of audio segments
+    fprintf('\n  Segmenting and analyzing audio characteristics...\n');
+    
+    % Parameters
+    segment_length = 0.5;  % 0.5 seconds
+    samples_per_segment = round(segment_length * fs);
+    
+    % Extract different types of segments
+    total_samples = length(audio_data);
+    n_segments = floor(total_samples / samples_per_segment);
+    
+    % Analyze each segment
+    segment_types = {};
+    optimal_orders = [];
+    estimated_params = {};
+    
+    figure('Position', [50, 50, 1600, 1000]);
+    
+    for seg = 1:min(6, n_segments)  % Analyze first 6 segments
+        start_idx = (seg-1) * samples_per_segment + 1;
+        end_idx = min(start_idx + samples_per_segment - 1, total_samples);
+        segment = audio_data(start_idx:end_idx);
+        
+        % Classify segment type (simple heuristic)
+        segment_type = classifyAudioSegment(segment);
+        segment_types{seg} = segment_type;
+        
+        % Find optimal AR order for this segment
+        [opt_order, ar_params, sigma_e] = findOptimalAROrder(segment);
+        optimal_orders(seg) = opt_order;
+        estimated_params{seg} = ar_params;
+        
+        fprintf('    Segment %d: %s, Optimal order: P=%d, σₑ=%.4f\n', ...
+                seg, segment_type, opt_order, sigma_e);
+        
+        % Plot segment analysis
+        subplot(3, 2, seg);
+        
+        % Time domain
+        t = (0:length(segment)-1) / fs;
+        plot(t, segment, 'b-', 'LineWidth', 1);
+        xlabel('Time (s)'); ylabel('Amplitude');
+        title(sprintf('Seg %d: %s (P=%d)', seg, segment_type, opt_order));
+        grid on;
+    end
+    
+    sgtitle(sprintf('Audio Segment Analysis: %s', filename));
+    
+    % Summary statistics
+    fprintf('    Summary:\n');
+    fprintf('      Average optimal order: %.1f\n', mean(optimal_orders));
+    fprintf('      Order range: %d to %d\n', min(optimal_orders), max(optimal_orders));
+end
+
+function segment_type = classifyAudioSegment(segment)
+    % Simple classification based on signal characteristics
+    energy = mean(segment.^2);
+    zero_crossings = sum(diff(sign(segment)) ~= 0);
+    spectral_centroid = calculateSpectralCentroid(segment);
+    
+    if energy < 0.001
+        segment_type = 'silence/quiet';
+    elseif zero_crossings > length(segment) * 0.1
+        segment_type = 'noisy/fricative';
+    elseif spectral_centroid > 2000
+        segment_type = 'high-freq/sibilant';
+    else
+        segment_type = 'vowel/tonal';
+    end
+end
+
+function centroid = calculateSpectralCentroid(signal)
+    % Calculate spectral centroid as a measure of brightness
+    N = length(signal);
+    Y = abs(fft(signal));
+    freqs = (0:N/2-1) * (8000/N);  % Assuming 8kHz sampling for simplicity
+    Y = Y(1:N/2);
+    
+    centroid = sum(freqs .* Y') / sum(Y);
+end
+
+function [opt_order, ar_params, sigma_e] = findOptimalAROrder(segment)
+    % Find optimal AR order using BIC with robust estimation
+    
+    % More conservative order range
+    segment_length = length(segment);
+    max_order = min(12, max(2, floor(segment_length/25)));  % More conservative bound
+    orders = 2:max_order;  % Start from P=2
+    
+    bic_values = inf(size(orders));
+    
+    for i = 1:length(orders)
+        P = orders(i);
+        try
+            [a_est, sigma_est] = estimateAR_ML(segment, P);
+            
+            % Only proceed if we got reasonable estimates
+            if ~any(isnan(a_est)) && sigma_est > 0 && all(isfinite(a_est))
+                residuals = calculateResiduals(segment, a_est);
+                
+                if ~isempty(residuals) && all(isfinite(residuals))
+                    N = length(residuals);
+                    
+                    % Calculate BIC with numerical stability
+                    log_likelihood = -N/2 * log(2*pi*sigma_est^2) - sum(residuals.^2)/(2*sigma_est^2);
+                    
+                    if isfinite(log_likelihood)
+                        bic_values(i) = -2*log_likelihood + P*log(N);
+                    end
+                end
+            end
+        catch ME
+            % Skip this order if estimation fails
+            continue;
+        end
+    end
+    
+    % Find minimum BIC
+    [min_bic, opt_idx] = min(bic_values);
+    
+    if ~isfinite(min_bic)
+        % Fallback to simple order
+        opt_order = 4;
+        fprintf('      Warning: BIC optimization failed, using P=4\n');
+    else
+        opt_order = orders(opt_idx);
+    end
+    
+    % Get parameters for optimal order
+    try
+        [ar_params, sigma_e] = estimateAR_ML(segment, opt_order);
+    catch
+        ar_params = [0.5; -0.3; zeros(opt_order-2, 1)];  % Reasonable fallback
+        sigma_e = std(segment) + 1e-6;
+    end
+end
+
+function interpolationExperiments(audio_data, fs, filename)
+    % Comprehensive interpolation experiments with audio reconstruction
+    fprintf('\n  Running interpolation experiments...\n');
+    
+    % Parameters for experiments
+    segment_length = 0.2;  % 200ms segments
+    samples_per_segment = round(segment_length * fs);
+    
+    % Different missing data scenarios
+    missing_scenarios = {
+        struct('name', 'Short bursts', 'pattern', @(n) generateShortBursts(n, 0.05, 0.1)),
+        struct('name', 'Medium gaps', 'pattern', @(n) generateMediumGaps(n, 0.1, 0.15)),
+        struct('name', 'Random dropouts', 'pattern', @(n) generateRandomDropouts(n, 0.1)),
+        struct('name', 'Periodic losses', 'pattern', @(n) generatePeriodicLosses(n, 0.1))
+    };
+    
+    % Create full audio reconstructions for each scenario
+    for scenario_idx = 1:length(missing_scenarios)
+        scenario = missing_scenarios{scenario_idx};
+        fprintf('    Processing scenario: %s\n', scenario.name);
+        
+        % Apply missing pattern to entire audio
+        missing_mask = scenario.pattern(length(audio_data));
+        
+        % Create corrupted audio (zero out missing parts)
+        corrupted_audio = audio_data;
+        corrupted_audio(missing_mask) = 0;
+        
+        % Reconstruct using AR interpolation
+        reconstructed_audio = reconstructFullAudio(audio_data, missing_mask, fs);
+        
+        % Calculate overall MSE
+        overall_mse = mean((audio_data(missing_mask) - reconstructed_audio(missing_mask)).^2);
+        missing_percent = sum(missing_mask) / length(missing_mask) * 100;
+        
+        fprintf('      Missing: %.1f%%, MSE: %.6f\n', missing_percent, overall_mse);
+        
+        % Save reconstructed audio files
+        [~, base_name, ~] = fileparts(filename);
+        output_filename = sprintf('%s_%s_reconstructed.wav', base_name, ...
+                                strrep(lower(scenario.name), ' ', '_'));
+        
+        % Normalize audio to prevent clipping
+        reconstructed_normalized = reconstructed_audio / max(abs(reconstructed_audio(:))) * 0.95;
+        
+        audiowrite(output_filename, reconstructed_normalized, fs);
+        fprintf('      Saved: %s\n', output_filename);
+        
+        % Also save corrupted version for comparison
+        corrupted_filename = sprintf('%s_%s_corrupted.wav', base_name, ...
+                            strrep(lower(scenario.name), ' ', '_'));
+        corrupted_normalized = corrupted_audio / max(abs(corrupted_audio(:))) * 0.95;
+        audiowrite(corrupted_filename, corrupted_normalized, fs);
+    end
+    
+    % Create detailed analysis plots
+    createDetailedInterpolationPlots(audio_data, fs, filename, missing_scenarios);
+end
+
+function reconstructed_audio = reconstructFullAudio(original_audio, missing_mask, fs)
+    % Reconstruct full audio using segment-wise AR interpolation
+    
+    N = length(original_audio);
+    reconstructed_audio = original_audio;  % Start with original
+    
+    % Process in overlapping segments for better continuity
+    segment_length = round(0.1 * fs);  % 100ms segments
+    overlap = round(0.02 * fs);        % 20ms overlap
+    hop_size = segment_length - overlap;
+    
+    % Find all missing segments
+    missing_segments = findMissingSegments(missing_mask);
+    
+    fprintf('      Found %d missing segments to reconstruct\n', size(missing_segments, 1));
+    
+    for seg_idx = 1:size(missing_segments, 1)
+        start_miss = missing_segments(seg_idx, 1);
+        end_miss = missing_segments(seg_idx, 2);
+        gap_length = end_miss - start_miss + 1;
+        
+        if gap_length <= 0
+            continue;
+        end
+        
+        fprintf('        Reconstructing gap %d: samples %d-%d (%.1fms)\n', ...
+                seg_idx, start_miss, end_miss, gap_length/fs*1000);
+        
+        % Determine context window around the gap
+        context_before = min(200, start_miss - 1);  % Use up to 200 samples before
+        context_after = min(200, N - end_miss);     % Use up to 200 samples after
+        
+        context_start = max(1, start_miss - context_before);
+        context_end = min(N, end_miss + context_after);
+        
+        % Extract context signal (excluding the gap)
+        context_signal = original_audio(context_start:context_end);
+        gap_offset = start_miss - context_start + 1;
+        gap_end_offset = end_miss - context_start + 1;
+        
+        % Temporarily zero out the gap in context
+        context_signal(gap_offset:gap_end_offset) = 0;
+        
+        % Find optimal AR parameters using available context
+        available_before = context_signal(1:gap_offset-1);
+        available_after = context_signal(gap_end_offset+1:end);
+        combined_available = [available_before; available_after];
+        
+        if length(combined_available) > 50  % Sufficient data
+            [opt_order, ar_params, sigma_e] = findOptimalAROrder(combined_available);
+        else
+            opt_order = 4;
+            ar_params = [0.5; -0.3; 0.1; -0.05];  % Default AR(4)
+            sigma_e = 0.01;
+        end
+        
+        % Interpolate this specific gap
+        interpolated_gap = interpolateGapAdvanced(original_audio, start_miss, end_miss, ar_params, sigma_e);
+        
+        % Apply the interpolation
+        reconstructed_audio(start_miss:end_miss) = interpolated_gap;
+    end
+end
+
+function interpolated_gap = interpolateGapAdvanced(signal, start_miss, end_miss, ar_params, sigma_e)
+    % Advanced gap interpolation with improved boundary handling
+    
+    gap_length = end_miss - start_miss + 1;
+    P = length(ar_params);
+    N = length(signal);
+    
+    % Initialize predictions
+    forward_pred = zeros(gap_length, 1);
+    backward_pred = zeros(gap_length, 1);
+    
+    % Forward prediction with better boundary handling
+    for i = 1:gap_length
+        current_idx = start_miss + i - 1;
+        pred_data = zeros(P, 1);
+        
+        for j = 1:P
+            look_back_idx = current_idx - j;
+            if look_back_idx >= 1 && look_back_idx < start_miss
+                pred_data(j) = signal(look_back_idx);  % Use original signal
+            elseif look_back_idx >= start_miss && look_back_idx < current_idx
+                pred_data(j) = forward_pred(look_back_idx - start_miss + 1);  % Use prediction
+            else
+                pred_data(j) = 0;  % Pad with zeros
+            end
+        end
+        
+        forward_pred(i) = sum(ar_params .* flip(pred_data));
+    end
+    
+    % Backward prediction
+    for i = gap_length:-1:1
+        current_idx = start_miss + i - 1;
+        pred_data = zeros(P, 1);
+        
+        for j = 1:P
+            look_forward_idx = current_idx + j;
+            if look_forward_idx <= N && look_forward_idx > end_miss
+                pred_data(j) = signal(look_forward_idx);  % Use original signal
+            elseif look_forward_idx <= end_miss && look_forward_idx > current_idx
+                pred_data(j) = backward_pred(look_forward_idx - start_miss + 1);  % Use prediction
+            else
+                pred_data(j) = 0;  % Pad with zeros
+            end
+        end
+        
+        backward_pred(i) = sum(ar_params .* pred_data);
+    end
+    
+    % Smooth weighting: more sophisticated blending
+    if gap_length == 1
+        alpha = 0.5;
+    else
+        % Use cosine taper for smoother transition
+        alpha = 0.5 * (1 + cos(pi * (0:gap_length-1) / (gap_length-1)))';
+    end
+    
+    interpolated_gap = alpha .* forward_pred + (1 - alpha) .* backward_pred;
+    
+    % Apply gentle smoothing to reduce artifacts
+    if gap_length > 3
+        % Simple 3-point smoothing
+        smoothed = interpolated_gap;
+        for i = 2:gap_length-1
+            smoothed(i) = 0.25*interpolated_gap(i-1) + 0.5*interpolated_gap(i) + 0.25*interpolated_gap(i+1);
+        end
+        interpolated_gap = smoothed;
+    end
+end
+
+function createDetailedInterpolationPlots(audio_data, fs, filename, missing_scenarios)
+    % Create detailed plots showing interpolation results
+    
+    figure('Position', [200, 200, 1600, 1000]);
+    
+    % Test on a representative segment
+    segment_start = round(length(audio_data) * 0.3);  % Start at 30% through file
+    segment_length = round(0.5 * fs);  % 500ms segment
+    segment_end = min(segment_start + segment_length - 1, length(audio_data));
+    test_segment = audio_data(segment_start:segment_end);
+    
+    for scenario_idx = 1:min(4, length(missing_scenarios))
+        scenario = missing_scenarios{scenario_idx};
+        
+        % Apply missing pattern to test segment
+        missing_mask = scenario.pattern(length(test_segment));
+        
+        % Reconstruct this segment
+        segment_missing_segs = findMissingSegments(missing_mask);
+        reconstructed_segment = test_segment;
+        
+        if ~isempty(segment_missing_segs)
+            % Use simple AR model for this demonstration
+            [opt_order, ar_params, ~] = findOptimalAROrder(test_segment);
+            
+            for seg_idx = 1:size(segment_missing_segs, 1)
+                start_miss = segment_missing_segs(seg_idx, 1);
+                end_miss = segment_missing_segs(seg_idx, 2);
+                
+                interpolated_gap = interpolateGapAdvanced(test_segment, start_miss, end_miss, ar_params, 0.01);
+                reconstructed_segment(start_miss:end_miss) = interpolated_gap;
+            end
+        end
+        
+        % Plot results
+        subplot(2, 2, scenario_idx);
+        
+        t = (0:length(test_segment)-1) / fs * 1000;  % Time in ms
+        
+        % Plot original
+        plot(t, test_segment, 'b-', 'LineWidth', 1.5, 'DisplayName', 'Original'); hold on;
+        
+        % Mark missing samples
+        if any(missing_mask)
+            missing_t = t(missing_mask);
+            plot(missing_t, test_segment(missing_mask), 'rx', 'MarkerSize', 4, ...
+                 'LineWidth', 1.5, 'DisplayName', 'Missing');
+            
+            % Plot reconstructed values
+            plot(missing_t, reconstructed_segment(missing_mask), 'go', 'MarkerSize', 3, ...
+                 'LineWidth', 1, 'DisplayName', 'Reconstructed');
+        end
+        
+        xlabel('Time (ms)'); ylabel('Amplitude');
+        title(sprintf('%s (P=%d)', scenario.name, opt_order));
+        legend('show', 'Location', 'best');
+        grid on;
+        
+        % Calculate MSE for this segment
+        if any(missing_mask)
+            mse = mean((test_segment(missing_mask) - reconstructed_segment(missing_mask)).^2);
+            text(0.02, 0.98, sprintf('MSE: %.2e', mse), 'Units', 'normalized', ...
+                 'VerticalAlignment', 'top', 'BackgroundColor', 'white');
+        end
+    end
+    
+    sgtitle(sprintf('AR Interpolation Results: %s', filename));
+end
+
+function [interpolated_signal, mse_error] = performARInterpolation(original_signal, missing_mask, P, sigma_e)
+    % Perform AR-based interpolation using forward/backward prediction
+    
+    N = length(original_signal);
+    interpolated_signal = original_signal;  % Start with original
+    
+    % Find missing segments
+    missing_segments = findMissingSegments(missing_mask);
+    
+    for seg = 1:size(missing_segments, 1)
+        start_miss = missing_segments(seg, 1);
+        end_miss = missing_segments(seg, 2);
+        gap_length = end_miss - start_miss + 1;
+        
+        if gap_length <= 0
+            continue;
+        end
+        
+        % Extract AR parameters from available data around the gap
+        available_data = original_signal;
+        available_data(missing_mask) = 0;  % Zero out missing parts
+        
+        % Estimate AR parameters from available data (simplified approach)
+        [ar_params, ~] = estimateARFromAvailableData(original_signal, missing_mask, P);
+        
+        % Interpolate this gap
+        interpolated_gap = interpolateGap(original_signal, start_miss, end_miss, ar_params, sigma_e);
+        interpolated_signal(start_miss:end_miss) = interpolated_gap;
+    end
+    
+    % Calculate MSE only for missing samples
+    mse_error = mean((original_signal(missing_mask) - interpolated_signal(missing_mask)).^2);
+end
+
+function missing_segments = findMissingSegments(missing_mask)
+    % Find contiguous segments of missing data
+    diff_mask = diff([0; missing_mask; 0]);
+    start_indices = find(diff_mask == 1);
+    end_indices = find(diff_mask == -1) - 1;
+    
+    missing_segments = [start_indices, end_indices];
+end
+
+function [ar_params, sigma_e] = estimateARFromAvailableData(signal, missing_mask, P)
+    % Estimate AR parameters using only available data
+    % Simplified: use longest contiguous segment
+    
+    available_segments = findAvailableSegments(~missing_mask);
+    
+    if isempty(available_segments)
+        ar_params = zeros(P, 1);
+        sigma_e = 0.1;
+        return;
+    end
+    
+    % Use longest available segment
+    [~, longest_idx] = max(available_segments(:, 2) - available_segments(:, 1));
+    seg_start = available_segments(longest_idx, 1);
+    seg_end = available_segments(longest_idx, 2);
+    
+    available_signal = signal(seg_start:seg_end);
+    
+    if length(available_signal) > P + 10  % Enough data for estimation
+        try
+            [ar_params, sigma_e] = estimateAR_ML(available_signal, P);
+        catch
+            ar_params = zeros(P, 1);
+            sigma_e = 0.1;
+        end
+    else
+        ar_params = zeros(P, 1);
+        sigma_e = 0.1;
+    end
+end
+
+function available_segments = findAvailableSegments(available_mask)
+    % Find contiguous segments of available data
+    diff_mask = diff([0; available_mask; 0]);
+    start_indices = find(diff_mask == 1);
+    end_indices = find(diff_mask == -1) - 1;
+    
+    available_segments = [start_indices, end_indices];
+end
+
+function interpolated_gap = interpolateGap(signal, start_miss, end_miss, ar_params, sigma_e)
+    % Interpolate a gap using forward/backward prediction with smooth weighting
+    
+    gap_length = end_miss - start_miss + 1;
+    P = length(ar_params);
+    
+    % Forward prediction
+    forward_pred = zeros(gap_length, 1);
+    for i = 1:gap_length
+        current_idx = start_miss + i - 1;
+        
+        % Use available data for initial predictions, then use predictions
+        pred_data = zeros(P, 1);
+        for j = 1:P
+            look_back_idx = current_idx - j;
+            if look_back_idx >= 1 && look_back_idx < start_miss
+                pred_data(j) = signal(look_back_idx);  % Available data
+            elseif look_back_idx >= start_miss && look_back_idx < current_idx
+                pred_data(j) = forward_pred(look_back_idx - start_miss + 1);  % Previous predictions
+            else
+                pred_data(j) = 0;  % Default
+            end
+        end
+        
+        forward_pred(i) = sum(ar_params .* flip(pred_data));
+        % Note: Not adding noise term for cleaner interpolation
+    end
+    
+    % Backward prediction
+    backward_pred = zeros(gap_length, 1);
+    for i = gap_length:-1:1
+        current_idx = start_miss + i - 1;
+        
+        % Use available data for initial predictions, then use predictions
+        pred_data = zeros(P, 1);
+        for j = 1:P
+            look_forward_idx = current_idx + j;
+            if look_forward_idx <= length(signal) && look_forward_idx > end_miss
+                pred_data(j) = signal(look_forward_idx);  % Available data
+            elseif look_forward_idx <= end_miss && look_forward_idx > current_idx
+                pred_data(j) = backward_pred(look_forward_idx - start_miss + 1);  % Previous predictions
+            else
+                pred_data(j) = 0;  % Default
+            end
+        end
+        
+        backward_pred(i) = sum(ar_params .* pred_data);
+    end
+    
+    % Weighted combination: α varies smoothly from 1 to 0
+    alpha = linspace(1, 0, gap_length)';
+    interpolated_gap = alpha .* forward_pred + (1 - alpha) .* backward_pred;
+end
+
+function plotInterpolationResults(original, missing_mask, interpolated, scenario_name)
+    % Plot interpolation results
+    
+    n_samples = length(original);
+    sample_indices = 1:n_samples;
+    
+    % Plot original signal
+    plot(sample_indices, original, 'b-', 'LineWidth', 1.5, 'DisplayName', 'Original'); hold on;
+    
+    % Mark missing samples
+    missing_indices = sample_indices(missing_mask);
+    if ~isempty(missing_indices)
+        plot(missing_indices, original(missing_mask), 'rx', 'MarkerSize', 6, ...
+             'LineWidth', 2, 'DisplayName', 'Missing');
+    end
+    
+    % Plot interpolated values
+    plot(missing_indices, interpolated(missing_mask), 'go', 'MarkerSize', 4, ...
+         'LineWidth', 1.5, 'DisplayName', 'Interpolated');
+    
+    xlabel('Sample Index'); ylabel('Amplitude');
+    title(sprintf('AR Interpolation: %s', scenario_name));
+    legend('show', 'Location', 'best');
+    grid on;
+end
+
+function comprehensiveInterpolationAnalysis(audio_data, fs, filename)
+    % Comprehensive analysis of interpolation performance
+    fprintf('\n  Running comprehensive interpolation analysis...\n');
+    
+    % Test parameters
+    segment_length = 0.3;  % 300ms segments
+    samples_per_segment = round(segment_length * fs);
+    test_orders = [2, 4, 6, 8, 10, 12];
+    missing_percentages = [0.05, 0.1, 0.15, 0.2, 0.25];
+    
+    % Results storage
+    mse_results = zeros(length(test_orders), length(missing_percentages));
+    
+    % Test on first segment
+    segment = audio_data(1:min(samples_per_segment, length(audio_data)));
+    
+    figure('Position', [150, 150, 1400, 800]);
+    
+    for order_idx = 1:length(test_orders)
+        P = test_orders(order_idx);
+        
+        for miss_idx = 1:length(missing_percentages)
+            miss_percent = missing_percentages(miss_idx);
+            
+            % Generate random missing pattern
+            missing_mask = rand(length(segment), 1) < miss_percent;
+            
+            % Perform interpolation
+            try
+                [~, mse_error] = performARInterpolation(segment, missing_mask, P, 0.1);
+                mse_results(order_idx, miss_idx) = mse_error;
+            catch
+                mse_results(order_idx, miss_idx) = nan;
+            end
+        end
+        
+        fprintf('    Order P=%d completed\n', P);
+    end
+    
+    % Plot results
+    subplot(1, 2, 1);
+    imagesc(missing_percentages, test_orders, log10(mse_results));
+    colorbar;
+    xlabel('Missing Data Percentage'); ylabel('AR Model Order');
+    title('Log₁₀(MSE) vs Order and Missing %');
+    
+    subplot(1, 2, 2);
+    for order_idx = 1:length(test_orders)
+        semilogy(missing_percentages, mse_results(order_idx, :), 'o-', ...
+                'LineWidth', 2, 'DisplayName', sprintf('P=%d', test_orders(order_idx)));
+        hold on;
+    end
+    xlabel('Missing Data Percentage'); ylabel('MSE (log scale)');
+    title('MSE vs Missing Data Percentage');
+    legend('show', 'Location', 'best');
+    grid on;
+    
+    sgtitle(sprintf('Comprehensive Interpolation Analysis: %s', filename));
+    
+    % Print summary
+    fprintf('    Analysis complete. Key findings:\n');
+    [min_mse, min_idx] = min(mse_results(:));
+    [best_order_idx, best_miss_idx] = ind2sub(size(mse_results), min_idx);
+    fprintf('      Best performance: P=%d with %.1f%% missing (MSE=%.6f)\n', ...
+            test_orders(best_order_idx), missing_percentages(best_miss_idx)*100, min_mse);
+end
+
+% Missing data pattern generators
+function mask = generateShortBursts(n, burst_prob, burst_length_ratio)
+    mask = false(n, 1);
+    burst_length = round(n * burst_length_ratio);
+    
+    i = 1;
+    while i <= n
+        if rand() < burst_prob
+            burst_end = min(i + burst_length - 1, n);
+            mask(i:burst_end) = true;
+            i = burst_end + 1;
+        else
+            i = i + 1;
+        end
+    end
+end
+
+function mask = generateMediumGaps(n, gap_prob, gap_length_ratio)
+    mask = false(n, 1);
+    gap_length = round(n * gap_length_ratio);
+    
+    n_gaps = round(gap_prob * n / gap_length);
+    gap_starts = randperm(n - gap_length + 1, min(n_gaps, n - gap_length + 1));
+    
+    for start = gap_starts
+        mask(start:start + gap_length - 1) = true;
+    end
+end
+
+function mask = generateRandomDropouts(n, dropout_prob)
+    mask = rand(n, 1) < dropout_prob;
+end
+
+function mask = generatePeriodicLosses(n, loss_ratio)
+    period = round(1 / loss_ratio);
+    mask = false(n, 1);
+    mask(1:period:end) = true;
+end
+
+% Helper functions from previous code
+function [a_est, sigma_e_est] = estimateAR_ML(y, P)
+    N = length(y);
+    
+    % More robust checks
+    if N <= P + 20 || P <= 0  % Need more data for stable estimation
+        a_est = zeros(P, 1);
+        sigma_e_est = std(y) + 1e-6;  % Use signal std as fallback
+        return;
+    end
+    
+    % Construct data matrix G and response vector y_vec
+    G = zeros(N-P, P);
+    for i = 1:(N-P)
+        G(i, :) = flip(y(i:(i+P-1)));
+    end
+    y_vec = y(P+1:N);
+    
+    % Check for numerical issues
+    if rank(G'*G) < P || cond(G'*G) > 1e12
+        % Use regularized least squares
+        lambda = 1e-6 * trace(G'*G) / P;  % Small regularization
+        a_est = (G' * G + lambda * eye(P)) \ (G' * y_vec);
+    else
+        % Standard ML estimate
+        a_est = (G' * G) \ (G' * y_vec);
+    end
+    
+    % Estimate noise variance with bounds
+    residuals = y_vec - G * a_est;
+    sigma_e_est = max(sqrt(mean(residuals.^2)), 1e-6);  % Minimum noise floor
+end
+
+function residuals = calculateResiduals(y, a_est)
+    P = length(a_est);
+    N = length(y);
+    
+    if N <= P
+        residuals = [];
+        return;
+    end
+    
+    residuals = zeros(N-P, 1);
+    for n = (P+1):N
+        y_pred = dot(a_est, flip(y(n-P:n-1)));
+        residuals(n-P) = y(n) - y_pred;
+    end
+end

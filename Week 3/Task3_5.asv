@@ -271,7 +271,7 @@ end
 
 
 %% Task 3.5 - AR Parameter Estimation: ML and Bayesian Methods
-
+%% AR Parameter Estimation: ML and Bayesian Methods
 clc; clear; close all;
 
 fprintf('=== AR PARAMETER ESTIMATION: ML vs BAYESIAN ===\n');
@@ -283,12 +283,12 @@ fprintf('=== AR PARAMETER ESTIMATION: ML vs BAYESIAN ===\n');
 % true_a = [0.5, -0.4, 0.3, -0.2, 0.1, -0.1, 0.5, -0.4, 0.3, -0.2, 0.1, -0.1, 0.5, -0.4, 0.3, -0.2, 0.1, -0.1]; % AR(18)
 
 % randomly generate
-P = 15; prior_sigma=0.01;
+P = 15; prior_sigma=0.1;
 true_a = prior_sigma * randn(1, P);
 
 true_P = length(true_a);
 true_sigma_e = 1.0;
-N = 10000;  % Signal length
+N = 100000;  % Signal length
 
 fprintf('True AR coefficients: [%.2f, %.2f, %.2f]\n', true_a);
 fprintf('True model order: P = %d\n', true_P);
@@ -301,8 +301,8 @@ y = generate_AR_signal(N, true_a, first_signals, true_sigma_e);
 
 % Run comprehensive parameter estimation analysis
 % analyzeParameterEstimation(y, N, true_a, true_sigma_e);
-analyzeModelOrderSelection(y, N, true_a, true_sigma_e);
-% comparePriorEffects(y, N, true_a, true_sigma_e);
+% analyzeModelOrderSelection(y, N, true_a, true_sigma_e);
+comparePriorEffects(y, N, true_a);
 
 function analyzeParameterEstimation(y, N, true_a, true_sigma_e)
     fprintf('\n--- Parameter Estimation Comparison ---\n');
@@ -533,24 +533,23 @@ function analyzeModelOrderSelection(y, N, true_a, true_sigma_e)
 end
 
 
-function comparePriorEffects(y, N, true_a, true_sigma_e)
+function comparePriorEffects(y, N, true_a)
     fprintf('\n--- Prior Effects Comparison ---\n');
     
     P = length(true_a);
-    prior_sigmas = [0.01, 0.1, 1.0, 10.0, 100.0];
-    prior_mean = zeros(P,1);
+    prior_vars = [0.01, 0.1, 1.0, 10.0, 100.0];
     
     % ML estimate for reference
-    [a_ml, ~] = estimateAR_ML(y, P);
+    [a_ml, sigma_e_ml] = estimateAR_ML(y, P);
     
-    % figure('Position', [150, 150, 1400, 800]);
+    fig÷ure('Position', [150, 150, 1400, 800]);
     
-    coeff_estimates = zeros(length(prior_sigmas), P);
-    mse_values = zeros(size(prior_sigmas));
+    coeff_estimates = zeros(length(prior_vars), P);
+    mse_values = zeros(size(prior_vars));
     
-    for i = 1:length(prior_sigmas)
-        prior_sigma = prior_sigmas(i);
-        [a_bayes, ~] = estimateAR_Bayesian(y, P, prior_sigma, prior_mean, true_sigma_e);
+    for i = 1:length(prior_vars)
+        prior_var = prior_vars(i);
+        [a_bayes, sigma_e_bayes] = estimateAR_Bayesian(y, P, prior_var);
         coeff_estimates(i, :) = a_bayes;
         
         residuals = calculateResiduals(y, a_bayes);
@@ -558,66 +557,35 @@ function comparePriorEffects(y, N, true_a, true_sigma_e)
     end
     
     % Plot coefficient evolution
-    figure;
     subplot(2, 3, 1:3);
-    % Define colors for each coefficient (reuse for higher orders)
-    colors = {[0.0, 0.4, 0.7], [0.8, 0.2, 0.2], [0.2, 0.7, 0.2], [0.9, 0.5, 0.0], ...
-              [0.6, 0.2, 0.8], [0.4, 0.8, 0.8], [0.8, 0.8, 0.2], [0.5, 0.5, 0.5]};
-    
-    % Plot each coefficient with consistent colors
     for j = 1:P
-        color = colors{mod(j-1, length(colors)) + 1}; % Cycle through colors
-        
-        % Bayesian estimates (solid line with circles)
-        semilogx(prior_sigmas, coeff_estimates(:, j), 'o-', 'LineWidth', 2, ...
-                'MarkerSize', 6, 'Color', color, 'MarkerFaceColor', color, ...
-                'DisplayName', sprintf('a_%d (Bayes)', j)); hold on;
-        
-        % True coefficients (thick dashed line, same color)
-        semilogx(prior_sigmas, ones(size(prior_sigmas)) * true_a(j), '--', ...
-                'LineWidth', 3, 'Color', color, ...
-                'DisplayName', sprintf('a_%d (True)', j));
-        
-        % ML estimates (dotted line, same color)
-        semilogx(prior_sigmas, ones(size(prior_sigmas)) * a_ml(j), ':', ...
-                'LineWidth', 2.5, 'Color', color, ...
-                'DisplayName', sprintf('a_%d (ML)', j));
-    end
-    
-    xlabel('Prior Standard Deviation'); ylabel('Coefficient Value');
-    title('Bayesian Coefficient Estimates vs Prior Standard Deviation');
-    legend('show', 'Location', 'best', 'NumColumns', 2);
-    grid on;
-    %{
-    for j = 1:P
-        semilogx(prior_sigmas, coeff_estimates(:, j), 'o-', 'LineWidth', 2, ...
+        semilogx(prior_vars, coeff_estimates(:, j), 'o-', 'LineWidth', 2, ...
                 'MarkerSize', 8, 'DisplayName', sprintf('a_%d', j)); hold on;
-        semilogx(prior_sigmas, ones(size(prior_sigmas)) * true_a(j), '--', ...
+        semilogx(prior_vars, ones(size(prior_vars)) * true_a(j), '--', ...
                 'LineWidth', 2, 'DisplayName', sprintf('True a_%d', j));
-        semilogx(prior_sigmas, ones(size(prior_sigmas)) * a_ml(j), ':', ...
+        semilogx(prior_vars, ones(size(prior_vars)) * a_ml(j), ':', ...
                 'LineWidth', 2, 'DisplayName', sprintf('ML a_%d', j));
     end
     xlabel('Prior Variance'); ylabel('Coefficient Value');
     title('Bayesian Coefficient Estimates vs Prior Variance');
     legend('show', 'Location', 'best');
     grid on;
-    %}
     
     % MSE vs prior variance
     subplot(2, 3, 4);
-    semilogx(prior_sigmas, mse_values, 'ro-', 'LineWidth', 2, 'MarkerSize', 8);
-    xlabel('Prior Standard Deviation'); ylabel('MSE');
-    title('MSE vs Prior Standard Deviation');
+    semilogx(prior_vars, mse_values, 'ro-', 'LineWidth', 2, 'MarkerSize', 8);
+    xlabel('Prior Variance'); ylabel('MSE');
+    title('MSE vs Prior Variance');
     grid on;
     
     % Shrinkage effect
     subplot(2, 3, 5);
-    shrinkage = abs(coeff_estimates - a_ml') ./ abs(a_ml');
+    shrinkage = abs(coeff_estimates - a_ml) ./ abs(a_ml);
     for j = 1:P
-        semilogx(prior_sigmas, shrinkage(:, j), 'o-', 'LineWidth', 2, ...
+        semilogx(prior_vars, shrinkage(:, j), 'o-', 'LineWidth', 2, ...
                 'DisplayName', sprintf('Coeff %d', j)); hold on;
     end
-    xlabel('Prior Standard Deviation'); ylabel('Relative Shrinkage');
+    xlabel('Prior Variance'); ylabel('Relative Shrinkage');
     title('Shrinkage Effect');
     legend('show');
     grid on;
@@ -626,16 +594,16 @@ function comparePriorEffects(y, N, true_a, true_sigma_e)
     subplot(2, 3, 6);
     x_range = -2:0.01:2;
     for i = [1, 3, 5]  % Show a few different priors
-        prior_pdf = normpdf(x_range, 0, sqrt(prior_sigmas(i)));
+        prior_pdf = normpdf(x_range, 0, sqrt(prior_vars(i)));
         plot(x_range, prior_pdf, 'LineWidth', 2, ...
-             'DisplayName', sprintf('σ² = %.2f', prior_sigmas(i))); hold on;
+             'DisplayName', sprintf('σ² = %.2f', prior_vars(i))); hold on;
     end
     xlabel('Coefficient Value'); ylabel('Prior Density');
     title('Gaussian Priors');
     legend('show');
     grid on;
     
-    sgtitle(sprintf('Effect of Gaussian Prior on Bayesian AR Estimation, N=%d', N));
+    sgtitle('Effect of Gaussian Prior on Bayesian AR Estimation');
     
     fprintf('Key observations:\n');
     fprintf('  - Small prior variance → strong shrinkage toward zero\n');
