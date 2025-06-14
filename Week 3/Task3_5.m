@@ -241,32 +241,6 @@ function plotPoleZero(a)
     end
 end
 
-function autocorr_theor = calculateTheoreticalAutocorr(a, lags)
-    % Calculate theoretical autocorrelation for AR process
-    % This is a simplified version - full calculation requires solving Yule-Walker equations
-    
-    % For demonstration, use exponential decay approximation
-    % In practice, you'd solve the characteristic equation properly
-    P = length(a);
-    
-    % Simple approximation based on dominant pole
-    [poles, ~] = checkStability(a);
-    dominant_pole = poles(1);  % Assume first pole is dominant
-    
-    autocorr_theor = zeros(size(lags));
-    for i = 1:length(lags)
-        lag = lags(i);
-        if lag >= 0
-            autocorr_theor(i) = real(dominant_pole^lag);
-        else
-            autocorr_theor(i) = real(dominant_pole^(-lag));
-        end
-    end
-    
-    % Normalize
-    autocorr_theor = autocorr_theor / autocorr_theor(lags == 0);
-end
-
 
 
 
@@ -767,4 +741,143 @@ function lml = log_marginal_likelihood(y, G, mu0, C0, sigma_e)
     
     end
 
+end
+
+
+
+%% Task 3.5 Model Selection for Vowel, Consonant, Steady, Transient
+
+clc, clearvars, close all;
+
+content = "transient";
+
+if content == "vowel"
+    [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
+    segment = data(55000:57000);
+    % segment = data(321500:323000); %Jacky
+elseif content == "consonant"
+    [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/f1lcapae.wav");
+    segment = data(60000:62000);
+    segment = data(319900:321230); %Jacky
+elseif content == "transient"
+    [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/grosse_original.wav");
+    % segment = data(74000:75000); % transient note of violin
+    segment = data(74000:74600); % transient note of violin
+    [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/armst_37_orig.wav");
+    segment = data(400:2800); % Jacky
+elseif content == "steady"
+    [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/piano_clean.wav");
+    segment = data(3200:3800); % pure note from piano
+    [data, rate] = audioread("/Users/maxlyu/Desktop/Part IIA/SF1/Audio examples for weeks 1-2-20250516/armst_37_orig.wav");
+    segment = data(16791:18356); % Jacky
+end
+
+% Calculate the model log-marginal-likelihood of P=1-20, selection model
+ARModelSelection(segment, content);
+
+function ARModelSelection(y, content)
+    fprintf('\n--- Bayesian Model Order Selection Analysis ---\n');
+    N = length(y);
+
+    max_order = 20; 
+    orders = 1:max_order;
+    
+    mse_ml = zeros(size(orders));
+    mse_bayes = zeros(size(orders));
+    log_marginal_likelihoods = zeros(size(orders));
+    
+    % Prior settings for Bayesian model selection
+    prior_sigma = 0.15;  % Prior standard deviation
+    
+    % figure('Position', [100, 100, 1600, 1000]);
+    
+    for P = orders
+        fprintf('Testing order P = %d\n', P);
+        
+        
+        
+        % ML estimation
+        [a_ml, sigma_e_ml] = estimateAR_ML(y, P);
+        residuals_ml = calculateResiduals(y, a_ml);
+        mse_ml(P) = mean(residuals_ml.^2);
+
+        % Prior parameters
+        prior_mean = zeros(P, 1);
+        prior_sigma = sigma_e_ml / 0.5;
+        prior_cov = (prior_sigma^2) * eye(P);
+
+        
+        % Bayesian estimation
+        [a_bayes, sigma_e_bayes, ~] = estimateAR_Bayesian(y, P, prior_sigma^2, prior_mean, sigma_e_ml);
+        residuals_bayes = calculateResiduals(y, a_bayes);
+        mse_bayes(P) = mean(residuals_bayes.^2);
+        
+        % Calculate marginal likelihood for Bayesian model selection
+        G = zeros(N-P, P);
+        for i = 1:(N-P)
+            G(i, :) = flip(y(i:(i+P-1)));
+        end
+        y_vec = y(P+1:N);
+
+        % THIS WAS MISSING - Calculate the actual log marginal likelihood
+        if P == 0 || isempty(G)
+            log_marginal_likelihoods(P) = log_marginal_likelihood(y_vec, 0, [], [], sigma_e_ml);
+        else
+            log_marginal_likelihoods(P) = log_marginal_likelihood(y_vec, G, prior_mean, prior_cov, sigma_e_ml);
+        end
+        
+        
+        fprintf('  P=%d: Log Marginal Likelihood = %.2f\n', P, log_marginal_likelihoods(P));
+    end
+    
+    % Plot MSE vs model order
+    figure;
+    plot(orders, mse_ml, 'bo-', 'LineWidth', 2, 'MarkerSize', 6); hold on;
+    plot(orders, mse_bayes, 'ro-', 'LineWidth', 2, 'MarkerSize', 6); hold on;
+    % xline(length(true_a), 'k--', 'True Order', 'LineWidth', 2);
+    xlabel('Model Order P'); ylabel('MSE');
+    title(sprintf('MSE vs Model Order (%s audio clip)', content));
+    legend('ML', 'Bayesian', 'True Order', 'Location', 'best');
+    grid on;
+    
+
+    figure;
+    % Plot Marginal Likelihood (the key plot!)
+    subplot(2, 1, 1);
+    plot(orders, log_marginal_likelihoods, 'g^-', 'LineWidth', 2, 'MarkerSize', 8);
+    xlabel('Model Order P'); ylabel('Log Marginal Likelihood');
+    title('Bayesian Model Evidence');
+    grid on;
+    
+    % Convert to model probabilities (if desired)
+    subplot(2, 1, 2);
+    max_lml = max(log_marginal_likelihoods);
+    log_probs = log_marginal_likelihoods - max_lml;
+    probs = exp(log_probs);
+    probs = probs / sum(probs);
+    
+    bar(orders, probs, 'FaceColor', [0.2 0.7 0.2]);
+    xlabel('Model Order P'); ylabel('Model Probability');
+    title('Posterior Model Probabilities');
+    grid on;
+
+
+    sgtitle(sprintf('Bayesian Model Order Selection Analysis (%s audio clip)', content));
+
+    
+    % Find optimal orders
+    [max_lml_val, opt_bayes] = max(log_marginal_likelihoods);
+    [~, opt_mse_ml] = min(mse_ml);
+    [~, opt_mse_bayes] = min(mse_bayes);
+    [max_prob_val, opt_prob] = max(probs);
+   
+    
+  
+    
+    fprintf('\nBayesian Model Selection Results:\n');
+    % fprintf('  True order: %d\n', length(true_a));
+    fprintf('  Optimal order (marginal likelihood): %d\n', opt_bayes);
+    fprintf('  Max marginal likelihood: %.2f\n', max_lml_val);
+    % fprintf('  Model probability for true order: %.1f%%\n', probs(true_order_idx)*100);
+    
 end
